@@ -69,3 +69,27 @@ Here KME4 and KME6 have been compromised, and link between KME7 and KME8 has bee
 be sent between them.
 
 However, KME8 is still able to recover the secret, and compromised KME4 and KME6 are not able to recover it.
+
+
+## Formal proof
+
+For the formal proof, we used the [ProVerif prover](https://bblanche.gitlabpages.inria.fr/proverif/).
+
+The formal proof is available in the `formal_verif/qkd_key_spread.pv` file.
+We used the following assumptions:
+- The QKD protocol is secure and authenticated
+- We used the same topology as in the implementation, ie the same as in the diagram above
+- We used the same threshold of 51% of shares to recover the secret
+- All KMEs are attacked by the same entity, meaning data leaked from KMEs 4 and 6 are available to the attacker
+- If we assumed QKD links are secure (modeled by **private channels** in ProVerif), output channels from compromised KMEs
+  are not secure anymore (modeled by **public channels** in ProVerif)
+
+### Running the formal proof
+
+To run the formal proof, first install ProVerif by following the instructions on https://bblanche.gitlabpages.inria.fr/proverif/.
+
+Then, run the following command:
+```bash
+proverif formal_verif/qkd_key_spread.pv
+```
+All queries should be answered with `true`.

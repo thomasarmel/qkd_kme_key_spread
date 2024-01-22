@@ -1,0 +1,143 @@
+(* This code provides formal verification for the proposed key transmission protocol between KMEs, connected to each other via QKD links *)
+(* Topology chema can be found in README.md *)
+
+set traceDisplay = long.
+set attacker = active. (* Attacker is able to modify messages on public channels *)
+set ignoreTypes = false.
+
+free public_leak_channel:channel. (* This channel will be used to model data leak to the attacker *)
+free kme1_2_channel:channel [private]. (* For inter-KME communication, we use private channels.*)
+free kme1_3_channel:channel [private]. (* Indeed these communications are supposed to be protected by QKD. *)
+free kme1_4_channel:channel [private]. (* So we can reasonably assume that confidentiality and authentication are garanteed *)
+
+free kme2_5_channel:channel [private].
+free kme2_6_channel:channel [private].
+free kme3_5_channel:channel [private].
+free kme3_6_channel:channel [private].
+free kme3_7_channel:channel [private].
+free kme4_6_dangerous_channel:channel. (* As we assumed KME 4 has been compromised by attacker, the channels from KME 4 are public: *)
+free kme4_7_dangerous_channel:channel. (* the attacker is able to send anything through it *)
+
+free kme5_8_channel:channel [private].
+free kme6_8_dangerous_channel:channel. (* Same: KME 6 is supposed to be compromised: messages from KME6 could be compromised too *)
+free kme7_8_broken_channel:channel [private]. (* This channel is assumed to be broken, so it won't be used *)
+
+
+free secret_to_transmit:bitstring [private]. (* Secret key to be transmitted throughout all KMEs *)
+
+query attacker(secret_to_transmit).
+query secret rebuilt_secret. (* Double check, just to be sure *)
+
+type shares2. (* Shamir's secret for k=2, n=2 *)
+fun shares2_to_bitstring(shares2): bitstring [data, typeConverter]. (* As we will need to do recursive Shamir secret sharing *)
+fun bitstring_to_shares2(bitstring): shares2 [data, typeConverter].
+reduc forall shares:bitstring; rev_shares2_to_bitstring(bitstring_to_shares2(shares)) = shares. (* Needed for type checking purpose *)
+fun shares2_get_share1(shares2): bitstring. (* From Shamir's secret, get first share as bitstring *)
+fun shares2_get_share2(shares2): bitstring. (* From Shamir's secret, get second share as bitstring *)
+reduc forall shares:shares2; get_share2_from_12(shares2_get_share1(shares), shares2_get_share2(shares)) = shares. (* Need the 2 shares to reconstruct the secret (>= 51%) *)
+
+type shares3. (* Shamir's secret for k=2, n=3 *)
+fun shares3_to_bitstring(shares3): bitstring [data, typeConverter].
+fun bitstring_to_shares3(bitstring): shares3 [data, typeConverter].
+reduc forall shares:bitstring; rev_shares3_to_bitstring(bitstring_to_shares3(shares)) = shares.
+fun shares3_get_share1(shares3): bitstring. (* From Shamir's secret, get first share as bitstring *)
+fun shares3_get_share2(shares3): bitstring. (* From Shamir's secret, get second share as bitstring *)
+fun shares3_get_share3(shares3): bitstring. (* From Shamir's secret, get third share as bitstring *)
+reduc forall shares:shares3; get_share3_from_12(shares3_get_share1(shares), shares3_get_share2(shares)) = shares. (* All (k n) combinations, as 2 of 3 shares are needed to decrypt the secret *)
+reduc forall shares:shares3; get_share3_from_13(shares3_get_share1(shares), shares3_get_share3(shares)) = shares.
+reduc forall shares:shares3; get_share3_from_23(shares3_get_share2(shares), shares3_get_share3(shares)) = shares.
+
+event sent_secret_kme1(bitstring). (* KME1 sent secret *)
+event received_secret_kme8(bitstring). (* KME8 decrypted secret *)
+query s:bitstring; inj-event(received_secret_kme8(s)) ==> inj-event(sent_secret_kme1(s)). (* Ensure secrets are the sames, to prove authentication and absence of replay attack *)
+
+let KME1() = (* First KME, that generates the secret *)
+    let shares_kme_234 = bitstring_to_shares3(secret_to_transmit) in
+    event sent_secret_kme1(secret_to_transmit);
+    let share_kme2 = shares3_get_share1(shares_kme_234) in (* Generate 3 shares for next KMEs: KME2, KME3 and KME4 *)
+    let share_kme3 = shares3_get_share2(shares_kme_234) in
+    let share_kme4 = shares3_get_share3(shares_kme_234) in
+    sync 1 [kme1]; (* Sync are needed to avoid dead loops *)
+    out(kme1_2_channel, share_kme2); (* Send shares to next KMEs *)
+    out(kme1_3_channel, share_kme3);
+    out(kme1_4_channel, share_kme4).
+
+
+let KME2() = (* 2nd layer *)
+    sync 1 [kme2];
+    in(kme1_2_channel, share_from_kme1:bitstring);
+    let shares_kme_56 = bitstring_to_shares2(share_from_kme1) in (* Split received share into sub shares *)
+    let share_kme5 = shares2_get_share1(shares_kme_56) in
+    let share_kme6 = shares2_get_share2(shares_kme_56) in
+    sync 2 [kme2];
+    out(kme2_5_channel, share_kme5); (* Send sub shares to next KMEs *)
+    out(kme2_6_channel, share_kme6).
+
+let KME3() = (* 2nd layer *)
+    sync 1 [kme3];
+    in(kme1_3_channel, share_from_kme1:bitstring);
+    let shares_kme_567 = bitstring_to_shares3(share_from_kme1) in (* Split received share into sub shares *)
+    let share_kme5 = shares3_get_share1(shares_kme_567) in
+    let share_kme6 = shares3_get_share2(shares_kme_567) in
+    let share_kme7 = shares3_get_share3(shares_kme_567) in
+    sync 2 [kme3];
+    out(kme3_5_channel, share_kme5); (* Send sub shares to next KMEs *)
+    out(kme3_6_channel, share_kme6);
+    out(kme3_7_channel, share_kme7).
+
+let KME4_compromised() = (* 2nd layer *)
+    sync 1 [kme4];
+    in(kme1_4_channel, share_from_kme1:bitstring);
+    let shares_kme_67 = bitstring_to_shares2(share_from_kme1) in (* Split received share into sub shares *)
+    let share_kme6 = shares2_get_share1(shares_kme_67) in
+    let share_kme7 = shares2_get_share2(shares_kme_67) in
+    out(public_leak_channel, share_from_kme1); (* aie aie aie, KME4 has been compromised, received informations are leak publicly *)
+    sync 2 [kme4];
+    out(kme4_6_dangerous_channel, share_kme6); (* Send sub shares to next KMEs *)
+    out(kme4_7_dangerous_channel, share_kme7). (* The 2 channels kme4_6_dangerous_channel and kme4_7_dangerous_channel following KME4 are public: *)
+                                     (*as KME has been compromised attacker is able to modify sent messages *)
+
+let KME5() = (* 3rd layer *)
+    sync 2 [kme5];
+    in(kme2_5_channel, share_from_kme2:bitstring);
+    in(kme3_5_channel, share_from_kme3:bitstring);
+    sync 3 [kme5];
+    out(kme5_8_channel, share_from_kme2); (* As there is only 1 next terget KME (KME 8), no need to generate new shares *)
+    out(kme5_8_channel, share_from_kme3). (* Just forward them directly to KME8 *)
+
+let KME6_compromised() = (* 3rd layer *)
+    sync 2 [kme6];
+    in(kme2_6_channel, share_from_kme2:bitstring);
+    in(kme3_6_channel, share_from_kme3:bitstring);
+    in(kme4_6_dangerous_channel, share_from_kme4:bitstring);
+    sync 4 [kme6];
+    out(kme6_8_dangerous_channel, share_from_kme2); (* Same as KME4, these channels are public, because the KME is compromised: attacker can modify output messages *)
+    out(kme6_8_dangerous_channel, share_from_kme3);
+    out(kme6_8_dangerous_channel, share_from_kme4);
+    out(public_leak_channel, share_from_kme2); (* All the incoming data leaked :o *)
+    out(public_leak_channel, share_from_kme3);
+    out(public_leak_channel, share_from_kme4).
+
+let KME7() =  (* 3rd layer *)
+    sync 2 [kme7];
+    in(kme3_7_channel, share_from_kme3:bitstring); (* Broken link: nothing will be sent to KME8 *)
+    in(kme4_7_dangerous_channel, share_from_kme4:bitstring).
+
+let KME8() =
+    sync 3 [kme8];
+    in(kme5_8_channel, share1_from_kme2:bitstring); (* Receive sub shares from KMEs 2 and 3, directly forwarded by KMEs 5 and 6 *)
+    in(kme5_8_channel, share1_from_kme3:bitstring);
+    sync 4 [kme8];
+    in(kme6_8_dangerous_channel, share2_from_kme2:bitstring);
+    in(kme6_8_dangerous_channel, share2_from_kme3:bitstring);
+    in(kme6_8_dangerous_channel, share1_from_kme4:bitstring);
+    let rebuilt_share_kme2 = rev_shares2_to_bitstring(get_share2_from_12(share1_from_kme2, share2_from_kme2)) in (* Rebuild shares from KME 2 ans 3 *)
+    let rebuilt_share_kme3 = rev_shares3_to_bitstring(get_share3_from_12(share1_from_kme3, share2_from_kme3)) in
+    let rebuilt_secret = rev_shares3_to_bitstring(get_share3_from_12(rebuilt_share_kme2, rebuilt_share_kme3)) in (* Rebuild initial secret from 2 / 3 shares well received *)
+    event received_secret_kme8(rebuilt_secret). (* Trigger event *)
+
+
+process
+    KME1() | KME2() | KME3() | KME4_compromised() | KME5() | KME6_compromised() | KME7() | KME8() (* Run all processes in parallel once, as the secret will be exchanged only once *)
+
+(* Authentication is assumed in this simplified model, otherwise could we manage it via via Merkel hash tree? *)
