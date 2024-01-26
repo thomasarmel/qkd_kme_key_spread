@@ -10,7 +10,7 @@ fn main() {
     let secret = SUPER_SECRET_STRING.as_bytes();
 
     let mut kme1 = Kme::new(1);
-    // KME1 is the initial KME, who will receive the secret
+    // KME1 is the initial KME, which will receive the secret
     kme1.set_secret(secret);
     assert!(check_retrieve_secret_ok(&kme1)); // Obviously KME1 can retrieve the secret
 
